@@ -1,0 +1,562 @@
+diff --git a/lotus/models/lm.py b/lotus/models/lm.py
+index 1da9a6b..857e45f 100644
+--- a/lotus/models/lm.py
++++ b/lotus/models/lm.py
+@@ -78,6 +78,25 @@ DEFAULT_MAX_TOKENS = 512
+ DEFAULT_REASONING_MAX_TOKENS = 8192
+ 
+ 
++def resolve_filter_positive_probability(
++    true_logprob: float | None,
++    false_logprob: float | None,
++    predicted_positive: bool,
++) -> float:
++    """Resolve a filter score using the same fallback as Lotus cascades.
++
++    Lotus normalizes the True/False alternatives when both are available. If
++    either alternative is unavailable, the emitted binary label is used as a
++    deterministic score (1 for True, 0 for False).
++    """
++    if true_logprob is not None and false_logprob is not None:
++        true_value = float(true_logprob)
++        false_value = float(false_logprob)
++        if math.isfinite(true_value) and math.isfinite(false_value):
++            return float(math.exp(true_value - np.logaddexp(true_value, false_value)))
++    return float(bool(predicted_positive))
++
++
+ class LM:
+     """
+     Language Model class for interacting with various LLM providers.
+@@ -232,8 +251,26 @@ class LM:
+         logprobs = (
+             [self._get_top_choice_logprobs(resp) for resp in all_responses] if all_kwargs.get("logprobs") else None
+         )
++        usage = []
++        for response in all_responses:
++            response_usage = getattr(response, "usage", None)
++            if response_usage is None:
++                usage.append({"input_tokens": 0, "completion_tokens": 0})
++                continue
++            if isinstance(response_usage, dict):
++                input_tokens = response_usage.get("prompt_tokens", 0)
++                completion_tokens = response_usage.get("completion_tokens", 0)
++            else:
++                input_tokens = getattr(response_usage, "prompt_tokens", 0)
++                completion_tokens = getattr(response_usage, "completion_tokens", 0)
++            usage.append(
++                {
++                    "input_tokens": int(input_tokens or 0),
++                    "completion_tokens": int(completion_tokens or 0),
++                }
++            )
+ 
+-        return LMOutput(outputs=outputs, logprobs=logprobs)
++        return LMOutput(outputs=outputs, logprobs=logprobs, usage=usage)
+ 
+     def get_completion(
+         self,
+@@ -586,23 +623,22 @@ class LM:
+         base_cascade = self.format_logprobs_for_cascade(logprobs)
+         all_positive_probs = []
+ 
+-        def get_normalized_positive_prob(token_probs: dict[str, float]) -> float | None:
+-            if positive_token in token_probs and negative_token in token_probs:
+-                pos_prob = token_probs[positive_token]
+-                neg_prob = token_probs[negative_token]
+-                return pos_prob / (pos_prob + neg_prob)
+-            return None
+-
+         for resp_idx, response_logprobs in enumerate(logprobs):
+             pos_prob = None
+             for logprob in response_logprobs:
+-                token_probs = {top.token: np.exp(top.logprob) for top in logprob.top_logprobs}
+-                pos_prob = get_normalized_positive_prob(token_probs)
+-                if pos_prob is not None:
++                token_logprobs = {top.token: top.logprob for top in logprob.top_logprobs}
++                true_logprob = token_logprobs.get(positive_token)
++                false_logprob = token_logprobs.get(negative_token)
++                if true_logprob is not None and false_logprob is not None:
++                    pos_prob = resolve_filter_positive_probability(true_logprob, false_logprob, False)
+                     break
+ 
+             if pos_prob is None:
+-                pos_prob = 1 if positive_token in base_cascade.tokens[resp_idx] else 0
++                pos_prob = resolve_filter_positive_probability(
++                    None,
++                    None,
++                    positive_token in base_cascade.tokens[resp_idx],
++                )
+ 
+             all_positive_probs.append(pos_prob)
+ 
+diff --git a/lotus/sem_ops/cascade_utils.py b/lotus/sem_ops/cascade_utils.py
+index 6896e4c..a197873 100644
+--- a/lotus/sem_ops/cascade_utils.py
++++ b/lotus/sem_ops/cascade_utils.py
+@@ -1,3 +1,6 @@
++import math
++from typing import Sequence
++
+ import numpy as np
+ from numpy.typing import NDArray
+ 
+@@ -15,14 +18,17 @@ def importance_sampling(
+ 
+     w = np.sqrt(proxy_scores)
+     is_weight = cascade_args.cascade_IS_weight
+-    w = is_weight * w / np.sum(w) + (1 - is_weight) * np.ones((len(proxy_scores))) / len(proxy_scores)
++    if not len(proxy_scores) or not np.isfinite(proxy_scores).all():
++        raise ValueError("Proxy scores must be finite and non-empty")
++    w = w / np.sum(w) if np.sum(w) else np.ones(len(w)) / len(w)
++    w = is_weight * w + (1 - is_weight) * np.ones(len(w)) / len(w)
+ 
+     sample_range = min(cascade_args.cascade_IS_max_sample_range, len(proxy_scores))
+     sample_w = w[:sample_range]
+     sample_w = sample_w / np.sum(sample_w)
+     indices = np.arange(sample_range)
+ 
+-    sample_size = int(cascade_args.sampling_percentage * len(proxy_scores))
++    sample_size = max(1, int(cascade_args.sampling_percentage * len(proxy_scores)))
+     sample_indices = np.random.choice(indices, sample_size, p=sample_w)
+ 
+     correction_factors = (1 / len(proxy_scores)) / w
+@@ -89,7 +95,12 @@ def learn_cascade_thresholds(
+         sorted_pairs: list[tuple[float, bool, np.float64]], tau_pos: float, recall_target: float
+     ) -> float:
+         return max(
+-            (x[0] for x in sorted_pairs[::-1] if recall(tau_pos, x[0], sorted_pairs) >= recall_target), default=0
++            (
++                threshold
++                for threshold in dict.fromkeys(x[0] for x in reversed(sorted_pairs))
++                if recall(tau_pos, threshold, sorted_pairs) >= recall_target
++            ),
++            default=0,
+         )
+ 
+     # Pair helper model probabilities with helper correctness and oracle answer
+@@ -125,8 +136,9 @@ def learn_cascade_thresholds(
+ 
+     # Do a statistical correction to get a target satisfying precision
+     candidate_thresholds: list[float] = [1.0]
+-    for pair in sorted_pairs:
+-        possible_threshold = pair[0]
++    # Quantile calibration creates many duplicate scores. Each duplicate yields
++    # the same Z sample, so evaluate every distinct threshold only once.
++    for possible_threshold in dict.fromkeys(pair[0] for pair in sorted_pairs):
+         Z = [int(x[1]) for x in sorted_pairs if x[0] >= possible_threshold]
+         mean_z = float(np.mean(Z)) if Z else 0.0
+         std_z = float(np.std(Z)) if Z else 0.0
+@@ -147,3 +159,68 @@ def learn_cascade_thresholds(
+ def calibrate_sem_sim_join(true_score: list[float]) -> list[float]:
+     true_score = list(np.clip(true_score, 0, 1))
+     return true_score
++
++
++def _accuracy_for_sample(
++    proxy_scores: np.ndarray,
++    oracle_labels: np.ndarray,
++    correction_factors: np.ndarray,
++    pos_threshold: float,
++    neg_threshold: float,
++    candidate_delta: float,
++) -> tuple[float, float]:
++    auto_positive = proxy_scores >= pos_threshold
++    auto_negative = (~auto_positive) & (proxy_scores <= neg_threshold)
++    errors = (auto_positive & (oracle_labels == 0)) | (auto_negative & (oracle_labels == 1))
++    corrected_errors = correction_factors * errors.astype(float)
++    estimated_error = float(np.mean(corrected_errors))
++    std_error = float(np.std(corrected_errors))
++    margin = (std_error / math.sqrt(len(corrected_errors))) * math.sqrt(2 * math.log(1 / candidate_delta))
++    upper_error = min(1.0, estimated_error + margin)
++    return 1.0 - estimated_error, 1.0 - upper_error
++
++
++def learn_accuracy_thresholds(
++    sample_proxy_scores: Sequence[float],
++    sample_oracle_labels: Sequence[int],
++    sample_correction_factors: Sequence[float],
++    all_proxy_scores: Sequence[float],
++    accuracy_target: float,
++    failure_probability: float,
++) -> tuple[float, float, float, float]:
++    """Jointly select thresholds with Lotus-style one-sided error bounds."""
++    sample_scores = np.asarray(sample_proxy_scores, dtype=float)
++    oracle_labels = np.asarray(sample_oracle_labels, dtype=int)
++    correction_factors = np.asarray(sample_correction_factors, dtype=float)
++    full_scores = np.asarray(all_proxy_scores, dtype=float)
++    if not len(sample_scores):
++        raise ValueError("Cannot learn accuracy thresholds from an empty calibration sample")
++
++    below_all = float(np.nextafter(min(0.0, float(np.min(full_scores))), -np.inf))
++    above_all = float(np.nextafter(max(1.0, float(np.max(full_scores))), np.inf))
++    candidates = sorted({below_all, above_all, *full_scores.tolist()})
++    pairs = [(neg, pos) for neg in candidates for pos in candidates if neg <= pos]
++    candidate_delta = failure_probability / len(pairs)
++
++    best: tuple[tuple[int, float, float, float], tuple[float, float, float, float]] | None = None
++    for neg_threshold, pos_threshold in pairs:
++        estimated_accuracy, accuracy_lower_bound = _accuracy_for_sample(
++            sample_scores,
++            oracle_labels,
++            correction_factors,
++            pos_threshold,
++            neg_threshold,
++            candidate_delta,
++        )
++        if accuracy_lower_bound < accuracy_target:
++            continue
++
++        oracle_calls = int(np.sum((full_scores < pos_threshold) & (full_scores > neg_threshold)))
++        key = (oracle_calls, -accuracy_lower_bound, pos_threshold, -neg_threshold)
++        value = (pos_threshold, neg_threshold, estimated_accuracy, accuracy_lower_bound)
++        if best is None or key < best[0]:
++            best = (key, value)
++
++    if best is None:
++        raise ValueError("No threshold pair satisfies the requested probabilistic accuracy target")
++    return best[1]
+diff --git a/lotus/sem_ops/sem_filter.py b/lotus/sem_ops/sem_filter.py
+index 850bb03..502005b 100644
+--- a/lotus/sem_ops/sem_filter.py
++++ b/lotus/sem_ops/sem_filter.py
+@@ -1,4 +1,4 @@
+-from typing import Any
++from typing import Any, Callable
+ 
+ import numpy as np
+ import pandas as pd
+@@ -17,10 +17,29 @@ from lotus.types import (
+ )
+ from lotus.utils import show_safe_mode
+ 
+-from .cascade_utils import calibrate_llm_logprobs, importance_sampling, learn_cascade_thresholds
++from .cascade_utils import (
++    calibrate_llm_logprobs,
++    importance_sampling,
++    learn_accuracy_thresholds,
++    learn_cascade_thresholds,
++)
+ from .postprocessors import filter_postprocess
+ 
+ 
++def direct_filter_formatter(row: dict[str, Any], user_instruction: str, cols: list[str]) -> list[dict[str, str]]:
++    """Format a sem_filter predicate as a single user message with row values interpolated directly."""
++    values = {col: "" if row[col] is None else str(row[col]) for col in cols}
++    return [{"role": "user", "content": user_instruction.format(**values)}]
++
++
++def dataframe_to_direct_filter_messages(
++    df: pd.DataFrame,
++    user_instruction: str,
++    cols: list[str],
++) -> list[list[dict[str, str]]]:
++    return [direct_filter_formatter(row, user_instruction, cols) for row in df[cols].to_dict(orient="records")]
++
++
+ def sem_filter(
+     docs: list[dict[str, Any]],
+     model: lotus.models.LM,
+@@ -133,6 +152,7 @@ def sem_filter(
+         outputs=postprocess_output.outputs,
+         explanations=postprocess_output.explanations,
+         logprobs=lm_output.logprobs if logprobs else None,
++        usage=lm_output.usage,
+     )
+ 
+ 
+@@ -151,6 +171,9 @@ def learn_filter_cascade_thresholds(
+     additional_cot_instructions: str = "",
+     system_prompt: str | None = None,
+     output_tokens: tuple[str, str] = ("True", "False"),
++    all_proxy_scores: list[float] | None = None,
++    phase_callback: Callable[[str], None] | None = None,
++    diagnostics: dict[str, Any] | None = None,
+     **model_kwargs: Any,
+ ) -> tuple[float, float]:
+     """
+@@ -203,6 +226,8 @@ def learn_filter_cascade_thresholds(
+     """
+ 
+     try:
++        if phase_callback:
++            phase_callback("oracle_calibration")
+         large_outputs = sem_filter(
+             sample_multimodal_data,
+             lm,
+@@ -220,12 +245,29 @@ def learn_filter_cascade_thresholds(
+             **model_kwargs,
+         ).outputs
+ 
+-        best_combination, _ = learn_cascade_thresholds(
+-            proxy_scores=proxy_scores,
+-            oracle_outputs=large_outputs,
+-            sample_correction_factors=sample_correction_factors,
+-            cascade_args=cascade_args,
+-        )
++        if phase_callback:
++            phase_callback("threshold_learning")
++        if cascade_args.accuracy_target is not None:
++            pos, neg, estimated, lower = learn_accuracy_thresholds(
++                proxy_scores,
++                large_outputs,
++                sample_correction_factors,
++                all_proxy_scores if all_proxy_scores is not None else proxy_scores,
++                cascade_args.accuracy_target,
++                cascade_args.failure_probability,
++            )
++            best_combination = (pos, neg)
++            if diagnostics is not None:
++                diagnostics.update(sample_estimated_accuracy=estimated, sample_accuracy_lower_bound=lower)
++        else:
++            best_combination, _ = learn_cascade_thresholds(
++                proxy_scores=proxy_scores,
++                oracle_outputs=large_outputs,
++                sample_correction_factors=sample_correction_factors,
++                cascade_args=cascade_args,
++            )
++        if diagnostics is not None:
++            diagnostics["sample_oracle_outputs"] = large_outputs
+ 
+         lotus.logger.info(f"Learned cascade thresholds: {best_combination}")
+         return best_combination
+@@ -304,14 +346,19 @@ class SemFilterDataframe:
+ 
+         # Example 1: simple filtering
+         >>> df.sem_filter("The review {text} and {rating} reflect's a positive sentiment ")
+-        Filtering: 100%|██████████████████████████████████████████████████████████████████ 2/2 LM calls [00:00<00:00,  2.06it/s]
++        Filtering: 100%|████████████████████ 2/2 LM calls [00:00<00:00,  2.06it/s]
+                     text  rating
+         0  Great product!      5
+ 
+         # Example 2: with zero-shot chain-of-thought (ZS-COT) reasoning
+         >>> from lotus.types import ReasoningStrategy
+-        >>> df.sem_filter("The review {text} and {rating} reflect's a positive sentiment ", strategy=ReasoningStrategy.ZS_COT, return_explanations=True, return_all=True)
+-        Filtering: 100%|██████████████████████████████████████████████████████████████████ 4/4 LM calls [00:01<00:00,  3.66it/s]
++        >>> df.sem_filter(
++        ...     "The review {text} and {rating} reflect's a positive sentiment ",
++        ...     strategy=ReasoningStrategy.ZS_COT,
++        ...     return_explanations=True,
++        ...     return_all=True,
++        ... )
++        Filtering: 100%|████████████████████ 4/4 LM calls [00:01<00:00,  3.66it/s]
+                                                         Text  filter_label explanation_filter
+         0             I had two apples, then I gave away one          True
+         1                         My friend gave me an apple          True
+@@ -364,14 +411,19 @@ class SemFilterDataframe:
+         additional_cot_instructions: str = "",
+         system_prompt: str | None = None,
+         output_tokens: tuple[str, str] = ("True", "False"),
++        direct_prompt: bool = False,
++        phase_callback: Callable[[str], None] | None = None,
+         **model_kwargs: Any,
+     ) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, Any]]:
+         if lotus.settings.lm is None:
+             raise ValueError(
+-                "The language model must be an instance of LM. Please configure a valid language model using lotus.settings.configure()"
++                "The language model must be an instance of LM. Please configure a valid language model using "
++                "lotus.settings.configure()"
+             )
+ 
+         stats: dict[str, Any] = {}
++        if phase_callback:
++            phase_callback("prompt_preparation")
+         lotus.logger.debug(user_instruction)
+         main_col_li = lotus.nl_expression.parse_cols(user_instruction)
+         lotus.logger.debug(main_col_li)
+@@ -382,6 +434,73 @@ class SemFilterDataframe:
+             if column not in self._obj.columns:
+                 raise ValueError(f"Column {column} not found in DataFrame")
+ 
++        if direct_prompt:
++            if cascade_args is not None:
++                raise ValueError("direct_prompt=True is not supported with cascade_args.")
++            if examples is not None or helper_examples is not None:
++                raise ValueError("direct_prompt=True is not supported with examples.")
++            if strategy is not None:
++                raise ValueError("direct_prompt=True is not supported with reasoning strategies.")
++            if system_prompt is not None:
++                raise ValueError("direct_prompt=True sends no system prompt; remove system_prompt.")
++
++            direct_messages = dataframe_to_direct_filter_messages(self._obj, user_instruction, main_col_li)
++            if safe_mode:
++                estimated_total_calls = len(direct_messages)
++                estimated_total_cost = sum(lotus.settings.lm.count_tokens(input) for input in direct_messages)
++                show_safe_mode(estimated_total_cost, estimated_total_calls)
++            lm_output = lotus.settings.lm(
++                direct_messages,
++                show_progress_bar=True,
++                progress_bar_desc=progress_bar_desc,
++                **model_kwargs,
++            )
++            postprocess_output = filter_postprocess(
++                lm_output.outputs,
++                lotus.settings.lm,
++                default,
++                output_tokens=output_tokens,
++            )
++            outputs = postprocess_output.outputs
++            raw_outputs = postprocess_output.raw_outputs
++            explanations = postprocess_output.explanations
++
++            if safe_mode:
++                lotus.settings.lm.print_total_usage()
++
++            if not return_all:
++                ids = [i for i, x in enumerate(outputs) if x]
++                new_df = self._obj.iloc[ids]
++                new_df.attrs["index_dirs"] = self._obj.attrs.get("index_dirs", None)
++                filtered_explanations = [explanations[i] for i in ids]
++                filtered_raw_outputs = [raw_outputs[i] for i in ids]
++            else:
++
++                def get_out_col_name(df, col_name):
++                    if col_name in df.columns:
++                        i = 1
++                        while f"{col_name}_{i}" in new_df.columns:
++                            i += 1
++                        return f"{col_name}_{i}"
++                    return col_name
++
++                new_df = self._obj.copy()
++                new_df[get_out_col_name(new_df, suffix)] = outputs
++                filtered_explanations = explanations
++                filtered_raw_outputs = raw_outputs
++
++            if return_explanations and return_raw_outputs:
++                new_df["explanation" + suffix] = filtered_explanations
++                new_df["raw_output" + suffix] = filtered_raw_outputs
++            elif return_explanations:
++                new_df["explanation" + suffix] = filtered_explanations
++            elif return_raw_outputs:
++                new_df["raw_output" + suffix] = filtered_raw_outputs
++
++            if return_stats:
++                return new_df, stats
++            return new_df
++
+         main_multimodal_data = task_instructions.df2multimodal_info(self._obj, main_col_li)
+         lotus.logger.debug(main_multimodal_data)
+         formatted_main_usr_instr = lotus.nl_expression.nle2str(user_instruction, main_col_li)
+@@ -458,6 +577,8 @@ class SemFilterDataframe:
+                 if helper_strategy == ReasoningStrategy.COT or helper_strategy == ReasoningStrategy.ZS_COT:
+                     raise ValueError("CoT not supported for helper models in cascades.")
+ 
++                if phase_callback:
++                    phase_callback("proxy_inference")
+                 helper_output = sem_filter(
+                     helper_multimodal_data,
+                     lotus.settings.helper_lm,
+@@ -475,6 +596,8 @@ class SemFilterDataframe:
+                     output_tokens=output_tokens,
+                     **model_kwargs,
+                 )
++                if phase_callback:
++                    phase_callback("score_calibration_sampling")
+                 _, helper_logprobs = helper_output.outputs, helper_output.logprobs
+                 assert helper_logprobs is not None
+                 formatted_helper_logprobs: LogprobsForFilterCascade = (
+@@ -498,16 +621,16 @@ class SemFilterDataframe:
+ 
+             if pos_cascade_threshold is None or neg_cascade_threshold is None:
+                 if (
+-                    cascade_args.recall_target is None
+-                    or cascade_args.precision_target is None
+-                    or cascade_args.failure_probability is None
+-                ):
++                    cascade_args.accuracy_target is None
++                    and (cascade_args.recall_target is None or cascade_args.precision_target is None)
++                ) or cascade_args.failure_probability is None:
+                     raise ValueError(
+                         "Recall target, precision target, and confidence need to be specified for learned thresholds."
+                     )
+ 
+                 sample_indices, correction_factors = importance_sampling(proxy_scores, cascade_args)
+-                sample_df = self._obj.loc[sample_indices]
++                sample_df = self._obj.iloc[sample_indices]
++                stats["sample_indices"] = sample_indices.tolist()
+                 sample_multimodal_data = task_instructions.df2multimodal_info(sample_df, main_col_li)
+                 sample_proxy_scores = [proxy_scores[i] for i in sample_indices]
+                 sample_correction_factors = correction_factors[sample_indices]
+@@ -520,6 +643,9 @@ class SemFilterDataframe:
+                     cascade_args=cascade_args,
+                     proxy_scores=sample_proxy_scores,
+                     sample_correction_factors=sample_correction_factors,
++                    all_proxy_scores=proxy_scores,
++                    phase_callback=phase_callback,
++                    diagnostics=stats,
+                     examples_multimodal_data=examples_multimodal_data,
+                     examples_answers=examples_answers,
+                     cot_reasoning=cot_reasoning,
+@@ -533,6 +659,8 @@ class SemFilterDataframe:
+             stats["cascade_args"].filter_pos_cascade_threshold = pos_cascade_threshold
+             stats["cascade_args"].filter_neg_cascade_threshold = neg_cascade_threshold
+ 
++        if phase_callback:
++            phase_callback("routing")
+         if pos_cascade_threshold is not None and neg_cascade_threshold is not None:
+             stats["filters_resolved_by_helper_model"] = 0
+             stats["filters_resolved_by_large_model"] = 0
+@@ -576,6 +704,10 @@ class SemFilterDataframe:
+             # Send low confidence samples to large LM if any
+             low_conf_idxs = sorted([i for i in range(len(proxy_outputs)) if i not in high_conf_idxs])
+             low_conf_multimodal_data = [main_multimodal_data[idx] for idx in low_conf_idxs]
++            stats["oracle_routed_indices"] = low_conf_idxs
++            stats["proxy_scores"] = proxy_scores
++            if phase_callback:
++                phase_callback("oracle_routed")
+             if low_conf_idxs:
+                 large_output = sem_filter(
+                     low_conf_multimodal_data,
+@@ -624,6 +756,8 @@ class SemFilterDataframe:
+             raw_outputs = output.raw_outputs
+             explanations = output.explanations
+ 
++        if phase_callback:
++            phase_callback("result_assembly")
+         if not return_all:
+             # find indices where output is True
+             ids = [i for i, x in enumerate(outputs) if x]
+diff --git a/lotus/types.py b/lotus/types.py
+index 0349196..a688b2e 100644
+--- a/lotus/types.py
++++ b/lotus/types.py
+@@ -14,6 +14,7 @@ from pydantic import BaseModel, model_validator
+ class LMOutput:
+     outputs: list[str]
+     logprobs: list[list[ChatCompletionTokenLogprob]] | None = None
++    usage: list[dict[str, int]] | None = None
+ 
+ 
+ @dataclass
+@@ -132,6 +133,7 @@ class SemanticFilterOutput:
+     explanations: list[str | None]
+     stats: dict[str, Any] | None = None
+     logprobs: list[list[ChatCompletionTokenLogprob]] | None = None
++    usage: list[dict[str, int]] | None = None
+ 
+ 
+ @dataclass
+@@ -161,6 +163,8 @@ class ProxyModel(Enum):
+ 
+ 
+ class CascadeArgs(BaseModel):
++    # Optional oracle-agreement target for live filter cascades.
++    accuracy_target: float | None = None
+     recall_target: float = 0.8
+     precision_target: float = 0.8
+     sampling_percentage: float = 0.1
+@@ -192,6 +196,13 @@ class CascadeArgs(BaseModel):
+ 
+     @model_validator(mode="after")
+     def check_filter_cascade_thresholds(self):
++        if self.accuracy_target is not None and not 0 < self.accuracy_target <= 1:
++            raise ValueError("accuracy_target must be in (0, 1].")
++        if self.accuracy_target is not None:
++            if not 0 < self.failure_probability < 1 or not 0 < self.sampling_percentage <= 1:
++                raise ValueError(
++                    "Accuracy cascades require failure_probability in (0, 1) and sampling_percentage in (0, 1]."
++                )
+         # Both must be set together or both unset
+         if (self.filter_pos_cascade_threshold is None) != (self.filter_neg_cascade_threshold is None):
+             raise ValueError(

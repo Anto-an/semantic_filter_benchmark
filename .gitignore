@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.venv/
+lotus-source/
+outputs/
+data/extracted/

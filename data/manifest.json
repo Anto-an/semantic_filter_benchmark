@@ -1,0 +1,327 @@
+{
+  "format_version": 2,
+  "encoding": "utf-8",
+  "csv_line_terminator": "LF",
+  "annotations_included": false,
+  "datasets": [
+    {
+      "dataset": "PubMed",
+      "text_column": "sentence",
+      "columns": [
+        "source_row_number",
+        "split",
+        "pmid",
+        "sentence_index",
+        "sentence"
+      ],
+      "rows": 10000,
+      "sanitized_csv_sha256": "9107cc86cbf32c27cdc1e4c72a2719777fbcd1b2e30651e0e6cf6f439dda6909",
+      "path": "baseline/PubMed.csv.gz",
+      "bytes": 692471,
+      "sha256": "0a827658f0258731b50b2240c8b80fe5003b414d43ec951336fd03a326080b4b"
+    },
+    {
+      "dataset": "BigPatent",
+      "text_column": "abstract",
+      "columns": [
+        "source_row_number",
+        "split",
+        "cpc_code",
+        "abstract"
+      ],
+      "rows": 10000,
+      "sanitized_csv_sha256": "38a37400e17e07b10a2398984a6f73473410df2c18f54c611705d606199bed32",
+      "path": "baseline/BigPatent.csv.gz",
+      "bytes": 2098710,
+      "sha256": "3c4643a96d0cdf9ebc9a813b6e736e28e01747a8fa5a4d6f6d83b8e15b157161"
+    },
+    {
+      "dataset": "FEVER",
+      "text_column": "text",
+      "columns": [
+        "source_row_number",
+        "id",
+        "text"
+      ],
+      "rows": 15981,
+      "sanitized_csv_sha256": "5e09cf324c94993404e315bc4084a838f60fe03dbb84b480f229fa25e8881cdf",
+      "path": "baseline/FEVER.csv.gz",
+      "bytes": 13012525,
+      "sha256": "cc0e740d75c450b7b32c53f0fad934b859e933f1c56724fe5a933199562f50ce"
+    },
+    {
+      "dataset": "GovReport",
+      "text_column": "summary",
+      "columns": [
+        "source_row_number",
+        "split",
+        "source",
+        "id",
+        "url",
+        "title",
+        "published_date",
+        "released_date",
+        "summary",
+        "fastfact"
+      ],
+      "rows": 10000,
+      "sanitized_csv_sha256": "09c6ed259360fa6810926ddc3f076a65ba14d2fd7bb475620c8aa247d87f9784",
+      "path": "baseline/GovReport.csv.gz",
+      "bytes": 11180151,
+      "sha256": "99f665100956498055512876f33fda9ea328dfeabe52fac55829ecec655643ea"
+    },
+    {
+      "dataset": "Court",
+      "text_column": "text",
+      "columns": [
+        "source_row_number",
+        "author_name",
+        "category",
+        "per_curiam",
+        "case_name",
+        "date_filed",
+        "federal_cite_one",
+        "absolute_url",
+        "cluster",
+        "year_filed",
+        "scdb_id",
+        "text"
+      ],
+      "rows": 16902,
+      "sanitized_csv_sha256": "18d640ca4ddf924a3cb8065f80ab335c7a5670c4afadb88fc34fd9a9741019f4",
+      "path": "baseline/Court.csv.gz",
+      "bytes": 92942463,
+      "sha256": "c7caf0bfe5b073a839b056e2222cb9d0bf45cec1c7ed1aeff9f22c5de2754dba"
+    },
+    {
+      "dataset": "Legal",
+      "text_column": "text",
+      "columns": [
+        "source_row_number",
+        "contract_filename",
+        "normalized_contract_key",
+        "text"
+      ],
+      "rows": 489,
+      "sanitized_csv_sha256": "e026da8c67098bb8b9d5140fefebba93a21f503407c7882ad7a73d905c6e82d4",
+      "path": "baseline/Legal.csv.gz",
+      "bytes": 7061478,
+      "sha256": "7691ddad20664e6ef3dd487f8d38e0cb354dde0c0de21d3f2e2cd96921eb666b"
+    },
+    {
+      "dataset": "Enron",
+      "text_column": "text",
+      "columns": [
+        "source_row_number",
+        "id",
+        "text",
+        "word_count"
+      ],
+      "rows": 9997,
+      "sanitized_csv_sha256": "0321f8a3d6979886f4f5054fc7ac0e3643022c2aabe48a33732cd030e150eadc",
+      "path": "baseline/Enron.csv.gz",
+      "bytes": 9209966,
+      "sha256": "e880d6357d8d8278614bae214866ac24cca4f4cc02db90943f4409c423d53a99"
+    },
+    {
+      "dataset": "Movie",
+      "text_column": "text",
+      "columns": [
+        "source_row_number",
+        "imdbid",
+        "title",
+        "year",
+        "genres",
+        "text"
+      ],
+      "rows": 1000,
+      "sanitized_csv_sha256": "e60e1f48bb4ac0aee9ed2998984ca90d08e66ff3cfbec7a96135550517f43101",
+      "path": "baseline/Movie.csv.gz",
+      "bytes": 54091081,
+      "sha256": "10403e0c45526dda9df54a8caf12dd976a237d5659b7be41afb9e28ac0594fc6"
+    },
+    {
+      "dataset": "Wiki",
+      "text_column": "text",
+      "columns": [
+        "id",
+        "timestamp",
+        "text",
+        "speaker",
+        "reply_to",
+        "conversation_id",
+        "meta.is-admin",
+        "vectors"
+      ],
+      "rows": 90000,
+      "sanitized_csv_sha256": "58be46cc0a6b8b3151967f23d1adbc623676b112ffdd8d95b9829739113ca8be",
+      "path": "baseline/Wiki.csv.gz",
+      "bytes": 12530135,
+      "sha256": "b3d9c0e70aad337eb17175ee080c5925797202f1e0178a8b893edf709b235022"
+    },
+    {
+      "dataset": "Steam",
+      "text_column": "review",
+      "columns": [
+        "id",
+        "app_id",
+        "app_name",
+        "review_id",
+        "language",
+        "review",
+        "timestamp_created",
+        "timestamp_updated",
+        "votes_helpful",
+        "votes_funny",
+        "weighted_vote_score",
+        "comment_count",
+        "steam_purchase",
+        "received_for_free",
+        "written_during_early_access",
+        "author.steamid",
+        "author.num_games_owned",
+        "author.num_reviews",
+        "author.playtime_forever",
+        "author.playtime_last_two_weeks",
+        "author.playtime_at_review",
+        "author.last_played"
+      ],
+      "rows": 90000,
+      "sanitized_csv_sha256": "30264d769a0e6051979b5e4ad20f0bd2eb4765947788d1ec144b9828142a8bb4",
+      "path": "baseline/Steam.csv.gz",
+      "bytes": 21709056,
+      "sha256": "d5571d5dd0c241fa1180728c1437dcfbc6ef669a6c455be991efb0ce5f4c25a5"
+    }
+  ],
+  "selections": [
+    {
+      "model": "gemma4_12b",
+      "dataset": "Wiki",
+      "method": "Low",
+      "rows": 10000,
+      "path": "selected_10k/gemma4_12b/Wiki/Low/ids.csv",
+      "sha256": "83f46d86c114d3ed329e1b0cf2fa2ccb1c90d5d22b35aedf0f5e5f5bc98ef7a7"
+    },
+    {
+      "model": "gemma4_12b",
+      "dataset": "Wiki",
+      "method": "High",
+      "rows": 10000,
+      "path": "selected_10k/gemma4_12b/Wiki/High/ids.csv",
+      "sha256": "b664f8a5217458fde61d8063fccd29d3a34105d70d9817972f2ad098130bf1ec"
+    },
+    {
+      "model": "gemma4_12b",
+      "dataset": "Wiki",
+      "method": "Mixed",
+      "rows": 10000,
+      "path": "selected_10k/gemma4_12b/Wiki/Mixed/ids.csv",
+      "sha256": "35a31c626a1e4cc73c81fb08e86f6a5784bae04750d186d725e7d57e3d6cddee"
+    },
+    {
+      "model": "gemma4_12b",
+      "dataset": "Wiki",
+      "method": "Uniform",
+      "rows": 3000,
+      "path": "selected_10k/gemma4_12b/Wiki/Uniform/ids.csv",
+      "sha256": "e8a9b4989cbe260579a36be59f207014a13f24bf9b4f94d4cfab6de5ed7e4d10"
+    },
+    {
+      "model": "gemma4_12b",
+      "dataset": "Steam",
+      "method": "Low",
+      "rows": 10000,
+      "path": "selected_10k/gemma4_12b/Steam/Low/ids.csv",
+      "sha256": "5638e974e65b897bb4517fa52d16b12f789d3b2815cf7637cdb6398f3955cf9d"
+    },
+    {
+      "model": "gemma4_12b",
+      "dataset": "Steam",
+      "method": "High",
+      "rows": 10000,
+      "path": "selected_10k/gemma4_12b/Steam/High/ids.csv",
+      "sha256": "00dc6faf0ab25359f9d0fea3a8ccec913dae2dc982989fe75d8ed05ba9062cd2"
+    },
+    {
+      "model": "gemma4_12b",
+      "dataset": "Steam",
+      "method": "Mixed",
+      "rows": 10000,
+      "path": "selected_10k/gemma4_12b/Steam/Mixed/ids.csv",
+      "sha256": "c293cfa041b5eed80b975777dbe9a297edb4aa3acd4d88f724670359bcc7c9b1"
+    },
+    {
+      "model": "gemma4_12b",
+      "dataset": "Steam",
+      "method": "Uniform",
+      "rows": 3000,
+      "path": "selected_10k/gemma4_12b/Steam/Uniform/ids.csv",
+      "sha256": "3538d33334c431661b3c9727c9074591a9e29038fcb53c8dfc62c42285afc80f"
+    },
+    {
+      "model": "qwen36_27b",
+      "dataset": "Wiki",
+      "method": "Low",
+      "rows": 10000,
+      "path": "selected_10k/qwen36_27b/Wiki/Low/ids.csv",
+      "sha256": "cc4e84a89f5b231bbc4c2cc0f93c5e39241c1af47d8c8a4a0bd96ba08ebb10c3"
+    },
+    {
+      "model": "qwen36_27b",
+      "dataset": "Wiki",
+      "method": "High",
+      "rows": 10000,
+      "path": "selected_10k/qwen36_27b/Wiki/High/ids.csv",
+      "sha256": "f80c3d33fb97aa26e31824a94cc0e2c3b932db32d0c242d3a4ebd63d6788c03d"
+    },
+    {
+      "model": "qwen36_27b",
+      "dataset": "Wiki",
+      "method": "Mixed",
+      "rows": 10000,
+      "path": "selected_10k/qwen36_27b/Wiki/Mixed/ids.csv",
+      "sha256": "af5792f53d03eff3d0523a835b2dc7121c29f21f6d2a94c383b3f59d051e70d0"
+    },
+    {
+      "model": "qwen36_27b",
+      "dataset": "Wiki",
+      "method": "Uniform",
+      "rows": 3000,
+      "path": "selected_10k/qwen36_27b/Wiki/Uniform/ids.csv",
+      "sha256": "4db462f6d310488cd7355d7945ec0e5d187f0451c4e0d934297b54f8e6532c2f"
+    },
+    {
+      "model": "qwen36_27b",
+      "dataset": "Steam",
+      "method": "Low",
+      "rows": 10000,
+      "path": "selected_10k/qwen36_27b/Steam/Low/ids.csv",
+      "sha256": "3e6082db8b64fa4c8191c896f600c94b73e3525fd37eca14da9c4c1742268fbe"
+    },
+    {
+      "model": "qwen36_27b",
+      "dataset": "Steam",
+      "method": "High",
+      "rows": 10000,
+      "path": "selected_10k/qwen36_27b/Steam/High/ids.csv",
+      "sha256": "2f99cd5cfdcde654c8c4d37e660c6ace42fd6b22a8a85fd248244e50a79f8dc3"
+    },
+    {
+      "model": "qwen36_27b",
+      "dataset": "Steam",
+      "method": "Mixed",
+      "rows": 10000,
+      "path": "selected_10k/qwen36_27b/Steam/Mixed/ids.csv",
+      "sha256": "b44b158bc72cc34f1f155db665e83c8b9d7132ecd0046e062d5e594cf534c32a"
+    },
+    {
+      "model": "qwen36_27b",
+      "dataset": "Steam",
+      "method": "Uniform",
+      "rows": 3000,
+      "path": "selected_10k/qwen36_27b/Steam/Uniform/ids.csv",
+      "sha256": "283eefc8882b7b79c11d73c71255505ef4f41f07b62e5a7bb5d5ad2b6f18f202"
+    }
+  ],
+  "predicates_sha256": "d6c967a0694fe6e9c6a4293b68e26b282ddb9348d455eebd6bc3283fd2453ed5"
+}

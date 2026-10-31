@@ -1,0 +1,117 @@
+dataset,predicate_id,predicate_column,predicate
+PubMed,pubmed_q0,sentence,"PubMed sentence:
+{sentence}
+
+Question: Does the sentence state or clearly indicate that the study aims to evaluate the effect, efficacy, safety, or outcome of a therapy, treatment, medicine, or clinical intervention?
+
+Return True only when this evaluative aim is stated or clearly implied. Return False for background, methods, results, or conclusions that do not indicate the study's aim.
+
+Respond with ONLY True or False.
+"
+BigPatent,big_patent_q14,abstract,"You are labeling the abstract of a patent document.
+
+Patent abstract:
+{abstract}
+
+Question: Does the document announce to surpass the prior art?
+
+Return True when the abstract explicitly states or clearly claims that the invention improves on existing technology, overcomes a limitation or disadvantage of prior approaches, solves a previously unresolved problem, or provides an advancement over known methods, devices, materials, or systems. The exact phrase ""prior art"" is not required.
+
+Return False when the abstract merely describes an invention or its possible uses without claiming an improvement over existing technology, or when there is not enough evidence that it surpasses prior art.
+
+Respond with ONLY True or False.
+"
+Enron,enron,text,"I will give you an email. Here is the email: {text}
+
+
+
+Your task is to determine if this email was sent from a senior executive or other high-ranking person at Enron.
+
+- True if the email was sent from a senior executive (CEO, President, VP, Director, etc.) or other high-ranking person
+- False if the email was sent from a lower-level employee or non-executive
+
+Important notes:
+Look for job titles, positions, and signatures that indicate seniority. Consider both formal titles and contextual clues about the sender's role and authority level.
+
+You must respond with ONLY True or False:"
+GovReport,gov_report_q16,summary,"Government report summary:
+{summary}
+
+Question: Does the summary identify flaws or problems in any area?
+
+Respond with ONLY True or False."
+Court,court_opinion,text,"I will give you a Supreme Court opinion---it may be an appeal or a new ruling, and the objective is broadly to determine if the Supreme Court is reversing a lower court's ruling. Here is the opinion: {text}
+
+
+
+Your task is to determine whether this court opinion reverses a lower court's ruling.
+
+Carefully read the opinion and consider the following:
+
+- Return True if the Supreme Court (or the relevant higher court) reverses the decision of a lower court.
+- Return False if the Supreme Court upholds (affirms) the lower court's ruling, or if the opinion does not address a lower court's decision.
+
+Note: The opinion may be a new ruling or an appeal. Focus on whether the outcome is a reversal of a previous court's judgment.
+
+You must respond with ONLY True or False:"
+Legal,legal_doc,text,"I will give you a legal document. Here is the document: {text}
+
+
+
+Your task is to determine if this document contains any type of covenant not to sue or agreement not to challenge intellectual property rights. This includes both direct promises and indirect restrictions.
+
+- True if it contains ANY of these:
+  - Agreement not to contest/challenge IP validity or ownership
+  - Promise not to question/attack/impugn IP rights
+  - Agreement not to take actions inconsistent with IP ownership
+  - Covenant not to bring claims/suits related to IP
+  - More generally, any provision that could be interpreted as a restriction on future IP challenges
+- False if it contains none of the above
+
+Important notes:
+- Consider both direct statements (shall not contest) and indirect restrictions (agrees not to take actions)
+- Look for releases, acknowledgments, and restrictions around IP rights
+- Include both offensive (direct challenges) and defensive (responses to suits) provisions
+- Consider provisions about patents, trademarks, copyrights and other IP
+- Look for language about validity, ownership, registration, and enforcement
+- Include provisions that restrict challenges through third parties or affiliates
+
+You must respond with ONLY True or False:"
+FEVER,fever,text,"I will give you a claim and a list of documents that may or may not explicitly support the claim. Here is the claim and documents:
+
+{text}
+
+
+
+Your task is to assess whether the provided claim is supported by the accompanying documents.
+
+- Return True if at least one of the documents clearly supports the claim.
+- Return False if none of the documents support the claim, or if the evidence is unclear or insufficient to determine support.
+
+You must respond with ONLY True or False:"
+Movie,movie,text,"I will give you a screenplay of a movie. Your task is to determine if the protagonist makes a critical decision based on false information.
+
+- True if the protagonist makes an important decision based on information that is incorrect or misleading
+- False if the protagonist's key decisions are based on accurate information or no major decisions are made based on false information
+
+Here is the screenplay: {text}
+
+You must respond with ONLY True or False:"
+Wiki,wiki_direct_question,text,"Wikipedia Talk-page comment:
+{text}
+
+Question: Does the comment genuinely ask another editor a question or request clarification?
+
+Return True when the comment contains a genuine question or request for clarification directed to another editor. Return False when it does not genuinely seek an answer or clarification.
+
+Respond with ONLY True or False.
+"
+Steam,steam_direct_positive,review,"Steam game review:
+{review}
+
+Question: Does the reviewer express an overall positive opinion of this game?
+
+Return True when the reviewer's final overall judgment is positive. Mixed reviews count as True only when the final overall judgment is positive. Return False when the overall judgment is negative, neutral, unclear, or mixed without a positive final judgment.
+
+Respond with ONLY True or False.
+"
