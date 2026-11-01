@@ -1,15 +1,18 @@
 # Semantic Filter Benchmark
 
-This artifact accompanies the paper's study of LOTUS, BARGAIN, ScaleDoc, and TaskCascade. It provides the ten baseline datasets without annotations, the oracle-confidence workload IDs from Section 6.2, the scripts needed to calculate cascadeability **κ**, and a patch that adds an **accuracy target to the LOTUS interface**. Experimental settings are documented below; experiment orchestration and figure-generation pipelines are omitted.
+This artifact accompanies the paper's study of LOTUS, BARGAIN, ScaleDoc, and TaskCascade. It provides the ten baseline datasets without annotations, the oracle-confidence workload IDs from Section 6.2, dataset-independent tools for generating confidence workloads and calculating cascadeability **κ**, and a patch that adds an **accuracy target to the LOTUS interface**. The technical report is available as [TR.pdf](TR.pdf). Experimental settings are documented below; experiment orchestration and figure-generation pipelines are omitted.
 
 ## Contents
 
 ```text
 README.md
+TR.pdf
 LICENSE
 requirements.txt
 lotus-accuracy.patch
 scripts/
+  generate_workloads.py
+  workload_selection.py
   calculate_kappa.py
   kappa_core.py
 data/
@@ -58,28 +61,88 @@ Only the two oracle selection models are included: **`gemma4_12b`** and **`qwen3
 
 There are **16 ID-only files**, containing **132,000 selection entries** in total. Every file contains exactly one column named `id`, with unique IDs in the original selection order. These selections reuse the released Wiki/Steam documents; overlapping selections do not introduce additional source records. Class-ratio variants and selections made by the smaller proxy models are omitted.
 
-### Reading the public data
+## Generate workloads from any dataset
 
-Each baseline is a **single complete gzip-compressed CSV**, with one header and no splitting. For example, `data/baseline/Steam.csv.gz` contains all 90,000 Steam records. `data/manifest.json` records each file's path, row count, columns, compressed size, and SHA-256 checksums for both the compressed file and its CSV content. Selection CSVs can be read directly.
+`scripts/generate_workloads.py` accepts any CSV or CSV.gz containing unique record IDs and **the probability assigned to the model's predicted label**. Choose the column names explicitly; there are no built-in dataset names, model names, predicate fields, or configuration directories. Text and label columns are not required or copied to the outputs.
 
-Pandas reads the compressed baselines directly, without an extraction step:
+For an input table such as `records.csv.gz`, with columns `record_key` and `answer_confidence`:
+
+```bash
+python -m pip install -r requirements.txt
+python scripts/generate_workloads.py records.csv.gz \
+  --id-column record_key --confidence-column answer_confidence \
+  --output-dir outputs/workloads
+```
+
+This requests all four methods. `--methods Low High Mixed Uniform` selects an explicit subset or ordering. Names are case-insensitive at the command line and use the paper's capitalization in output directories. `--sample-size` controls Low/High/Mixed (default 10,000); `--uniform-sample-size` controls Uniform (default 3,000). For example:
+
+```bash
+python scripts/generate_workloads.py records.csv.gz \
+  --id-column record_key --confidence-column answer_confidence \
+  --methods Low Mixed --sample-size 2000 --seed 17 \
+  --output-dir outputs/custom_workloads
+```
+
+The input must contain enough unique records for each requested method. IDs are read as strings, preserving leading zeros and literal IDs such as `NA`. Missing, blank, or duplicate IDs and nonfinite/out-of-range confidence values are rejected; rows are never silently dropped. Confidence must be in `[0,1]`. The tool uses the supplied confidence directly, without clipping, quantile calibration, class-probability conversion, or implicit model-specific normalization. `P(True)` and quantile-calibrated proxy scores are not substitutes for predicted-label confidence. If necessary, compute the intended confidence with your model interface first.
+
+An optional `--logprob-column answer_logprob` checks that confidence equals the exponential of the provided chosen-label log-probability, within an absolute tolerance of `1e-9`. This does not change the selection scores.
+
+### Selection rules
+
+| Method | Rule |
+|---|---|
+| Low | Select the exact lowest-confidence records. |
+| High | Select the exact highest-confidence records. |
+| Mixed | Select equal, disjoint low/high tails; sample size must be even. |
+| Uniform | Find a capacity-feasible confidence interval and select records approximating a continuous uniform distribution within it, subject to all strict checks below. |
+
+Ranking breaks confidence ties by canonical string ID. When tied tails overlap, Mixed retains the low-tail choices and takes the next disjoint records in high-rank order. Uniform uses capacity-projected quotas and nearest-target matching within bins. The default seed is 42; it controls the final Mixed/Uniform output order, not their deterministic membership. Given the same ID/confidence pairs, changing source-row order does not change the selections.
+
+Strict Uniform searches quantile-defined interval candidates and chooses the widest passing interval among the searched candidates. It does **not** promise uniformity over the whole `[0,1]` range, prove that no possible interval exists when its search fails, or silently substitute a disconnected-support or best-effort distribution.
+
+| Uniform option | Default |
+|---|---:|
+| `--uniform-target-bins` | 60 |
+| `--uniform-interval-grid-size` | 201 quantile endpoints |
+| `--uniform-candidate-limit` | 100 candidates per pool; up to 200 retained |
+| `--uniform-maximum-tv` | 0.10 fine-bin total variation |
+| `--uniform-maximum-ks` | 0.02 Kolmogorov–Smirnov distance |
+| `--uniform-maximum-wasserstein` | 0.01 interval-normalized Wasserstein distance |
+| `--uniform-maximum-gap-bin-widths` | 2.0 |
+
+### Generated files and infeasibility
+
+```text
+outputs/workloads/
+  Low/ids.csv
+  High/ids.csv
+  Mixed/ids.csv
+  Uniform/ids.csv
+  manifest.json
+```
+
+Each successful method emits exactly one column named `id`, regardless of the source ID-column name. The manifest records the source checksum, input columns, seed, requested/achieved counts, method status, output checksums, tie-breaking details, and Uniform settings, selected interval, quotas, and metrics. The published data manifest is separate from these generated-run manifests.
+
+If no searched Uniform interval passes all limits, the manifest records `Uniform.status = "infeasible"`, its reason, and available diagnostics. No Uniform ID file or best-effort ID file is emitted. Other successful requested methods are retained. A constant-confidence input is also Uniform-infeasible, while the rank methods remain available.
+
+Exit code `0` means all requested methods succeeded; `1` means a requested workload was infeasible; `2` indicates invalid inputs, configuration, or output errors. Existing managed outputs are refused unless `--overwrite` is specified. On overwrite, the run replaces its four tool-owned ID files and manifest, removing stale files for infeasible or unrequested methods while preserving unrelated files. An unrelated existing manifest is never overwritten. Use a dedicated output directory, such as `outputs/workloads`, to keep historical paper artifacts intact.
+
+The generator does not require or modify the bundled datasets. The existing released selection IDs remain historical paper artifacts; new inputs and settings produce new workloads.
+
+### Reading data and materializing selections
+
+Each released baseline is a single complete gzip-compressed CSV. `data/manifest.json` records its path, row count, columns, compressed size, and SHA-256 checksums for both the compressed file and its CSV content. Pandas reads CSV.gz directly. For your own records, join the normalized output IDs back to the source using the explicitly chosen source ID column:
 
 ```python
 import pandas as pd
 
-baseline = pd.read_csv("data/baseline/Steam.csv.gz", dtype={"id": str})
+records = pd.read_csv("records.csv.gz", dtype={"record_key": str}, keep_default_na=False)
+ids = pd.read_csv("outputs/workloads/Low/ids.csv", dtype={"id": str}, keep_default_na=False)
+assert records["record_key"].is_unique and ids["id"].isin(records["record_key"]).all()
+selected = records.set_index("record_key").loc[ids["id"]].reset_index()
 ```
 
-To materialize an ID selection, read both IDs as strings and preserve selection order:
-
-```python
-import pandas as pd
-
-baseline = pd.read_csv("data/baseline/Steam.csv.gz", dtype={"id": str})
-ids = pd.read_csv("data/selected_10k/gemma4_12b/Steam/Uniform/ids.csv", dtype={"id": str})
-assert ids["id"].is_unique and ids["id"].isin(baseline["id"]).all()
-selected = baseline.set_index("id").loc[ids["id"]].reset_index()
-```
+This preserves selection order. The same join applies to the bundled ID files using their documented baseline identities. Source documents and annotations are not embedded in the generated `ids.csv` files.
 
 ## LOTUS accuracy-target interface
 
@@ -96,7 +159,7 @@ The patch modifies `lotus/types.py`, `lotus/sem_ops/cascade_utils.py`, `lotus/se
 
 Accuracy is agreement with the chosen oracle, rather than agreement with independent human annotations. LOTUS normalizes the proxy's True/False token probabilities when both are available; otherwise it uses the emitted binary label as a deterministic score. It applies quantile calibration, importance sampling with replacement, and joint threshold selection using the implementation's normal-approximation lower bound. This estimated bound is not an unconditional finite-sample guarantee.
 
-Use LOTUS directly for a workload. The following illustrates the Gemma configuration for Wiki after starting the two model servers:
+Use LOTUS directly with your own records and predicate. Set `PROXY_MODEL`, `ORACLE_MODEL`, `PROXY_API_BASE`, `ORACLE_API_BASE`, `MODEL_API_KEY`, and `MAX_CTX_LEN` for your serving setup. Set `FILTER_PREDICATE` to the natural-language predicate with placeholders matching your input columns, such as `{content}`. The same code works independently of the dataset and model family:
 
 ```python
 import os
@@ -105,20 +168,20 @@ import lotus
 from lotus.models import LM
 from lotus.types import CascadeArgs
 
-df = pd.read_csv("data/baseline/Wiki.csv.gz", dtype={"id": str}).fillna("")
-predicates = pd.read_csv("data/predicates.csv")
-predicate = predicates.loc[predicates["dataset"].eq("Wiki"), "predicate"].item()
+ID_COLUMN = "record_key"  # Change to the identity column in your records.
+df = pd.read_csv("records.csv.gz", dtype={ID_COLUMN: str}, keep_default_na=False)
+predicate = os.environ["FILTER_PREDICATE"]
 
-oracle = LM(
-    model="hosted_vllm/google/gemma-4-12B-it",
-    api_base="http://localhost:8001/v1", api_key=os.environ["MODEL_API_KEY"],
-    temperature=0, max_tokens=4, max_ctx_len=16384,
-)
-proxy = LM(
-    model="hosted_vllm/google/gemma-4-E4B-it",
-    api_base="http://localhost:8000/v1", api_key=os.environ["MODEL_API_KEY"],
-    temperature=0, max_tokens=4, max_ctx_len=16384,
-)
+def served_model(role):
+    return LM(
+        model=os.environ[f"{role}_MODEL"],
+        api_base=os.environ[f"{role}_API_BASE"],
+        api_key=os.environ["MODEL_API_KEY"],
+        temperature=0, max_tokens=4,
+        max_ctx_len=int(os.environ["MAX_CTX_LEN"]),
+    )
+
+oracle, proxy = served_model("ORACLE"), served_model("PROXY")
 lotus.settings.configure(lm=oracle, helper_lm=proxy, enable_cache=False)
 result, stats = df.sem_filter(
     predicate,
@@ -136,9 +199,9 @@ result, stats = df.sem_filter(
 )
 ```
 
-Endpoints must serve the stated models, return log-probabilities, and have chain-of-thought reasoning disabled. For local servers that do not require authentication, set `MODEL_API_KEY` to the value expected by the server. Use model-specific serving options for strict True/False output and sufficient context; do not truncate or silently discard overlength records. The explicit sample-range setting above samples from the entire workload, rather than LOTUS's smaller upstream default range.
+Endpoints must return log-probabilities and have chain-of-thought reasoning disabled. For local servers that do not require authentication, set `MODEL_API_KEY` to the value expected by the server. Use model-specific serving options for strict True/False output and sufficient context; do not truncate or silently discard overlength records. The explicit sample-range setting above samples from the entire workload, rather than LOTUS's smaller upstream default range.
 
-`result["_filter"]` contains cascade decisions. `stats["proxy_scores"]` contains the fixed quantile-calibrated scores. Calibration sampling has duplicate draws, so physical oracle requests and unique labeled documents differ. Keep calibration costs separate from inference routing reduction.
+`result["_filter"]` contains cascade decisions. `stats["proxy_scores"]` contains fixed quantile-calibrated scores for κ calculation, rather than the oracle's predicted-label confidence required for workload generation. Calibration sampling has duplicate draws, so physical oracle requests and unique labeled documents differ. Keep calibration costs separate from inference routing reduction.
 
 ## Calculating κ
 
@@ -165,30 +228,39 @@ For LOTUS, obtain complete reference labels separately through the oracle interf
 ```python
 reference = df.sem_filter(predicate, return_all=True)  # Oracle only; no cascade_args.
 score_table = pd.DataFrame({
-    "id": df["id"].astype(str),
+    "id": df[ID_COLUMN].astype(str),
     "oracle_label": reference["_filter"].astype(int),
     "proxy_score": stats["proxy_scores"],
 })
-score_table.to_csv("wiki_scores.csv", index=False)
+score_table.to_csv("scores.csv", index=False)
 ```
 
 The full-oracle pass is extra work for retrospective diagnosis, not part of the practical cascade's calibration cost. Keep the same documents, order, predicate, oracle model, and model configuration across the two passes.
 
-Examples of individual κ calculations:
+Examples of individual κ calculations, using the normalized score table above and any generated ID selection:
 
 ```bash
-python scripts/calculate_kappa.py wiki_scores.csv \
-  --alpha 0.95 --output outputs/wiki_kappa.json
-python scripts/calculate_kappa.py wiki_scores.csv \
-  --ids data/selected_10k/gemma4_12b/Wiki/Low/ids.csv \
-  --alpha 0.95 --output outputs/wiki_low_kappa.json
+python scripts/calculate_kappa.py scores.csv \
+  --alpha 0.95 --output outputs/kappa.json
+python scripts/calculate_kappa.py scores.csv \
+  --ids outputs/workloads/Low/ids.csv \
+  --alpha 0.95 --output outputs/low_kappa.json
 ```
 
-`--id-column`, `--oracle-column`, and `--score-column` select columns from existing score exports. For the eight other datasets, `--id-column source_row_number` uses the canonical benchmark identity. When selecting Wiki/Steam records, score-table IDs must match the released `id` values. If an older Steam export has only `review_id`, first join the baseline's `id,review_id` mapping; those two identities are not interchangeable.
+Existing score tables do not need to rename their columns. For example, a table using `record_key`, `reference_answer`, and `surrogate_score` can be evaluated directly:
+
+```bash
+python scripts/calculate_kappa.py custom_scores.csv.gz \
+  --id-column record_key --oracle-column reference_answer \
+  --score-column surrogate_score --ids outputs/workloads/High/ids.csv \
+  --output outputs/high_kappa.json
+```
+
+Generated selections always use `id`. For an external one-column selection CSV with a different header, pass `--selection-id-column chosen_key`. Both inputs must identify the same records; column-name mapping does not translate between different identity systems. IDs are preserved as strings, and selection-file order is retained. Invalid or duplicate IDs, missing selected records, nonbinary oracle labels, and nonfinite proxy scores are rejected. Oracle labels are normalized to numeric 0/1 before optimization. Internal normalized names `document_id` and `oracle_label` must not conflict with other input columns.
 
 ### Fixed multi-stage cascades
 
-For TaskCascade, supply all fixed proxy stages in their execution order, with columns:
+For a fixed multi-stage cascade, including TaskCascade, supply all fixed proxy stages in their execution order, with columns:
 
 ```text
 id,oracle_label,stage_01_prediction,stage_01_confidence,stage_02_prediction,stage_02_confidence,...
@@ -252,8 +324,8 @@ These are the paper's experimental cost constants, not a statement of current se
 
 ## Attribution and validation
 
-The LOTUS patch derives from [lotus-data/lotus](https://github.com/lotus-data/lotus) at the revision given above. Its original Apache-2.0 license text is retained in `LICENSE`. The κ routines are extracted from the paper's existing implementation without changing their optimization logic. The other systems' implementations and a manuscript PDF are not bundled.
+The LOTUS patch derives from [lotus-data/lotus](https://github.com/lotus-data/lotus) at the revision given above. Its original Apache-2.0 license text is retained in `LICENSE`. The κ routines are extracted from the paper's existing implementation without changing their optimization logic. The generic workload selection core is derived from the original sampler's exact rank and strict Uniform routines; dataset/model seed namespaces and configuration-specific entry points are removed. The other systems' implementations are not bundled; the technical report is provided as [TR.pdf](TR.pdf).
 
 Dataset families follow the paper's bibliography: [PubMed 200k RCT](https://aclanthology.org/I17-2052/), [BIGPATENT](https://aclanthology.org/P19-1212/), [Enron](https://doi.org/10.1007/978-3-540-30115-8_22), [GovReport](https://aclanthology.org/2021.naacl-main.112/), [SCOTUS Opinions](https://www.kaggle.com/datasets/gqfiddler/scotus-opinions), [CUAD](https://datasets-benchmarks-proceedings.neurips.cc/paper_files/paper/2021/file/6ea9ab1baa0efb9e19094440c317e21b-Paper-round1.pdf), [FEVER](https://aclanthology.org/N18-1074/), [Movie Scripts Corpus](https://www.kaggle.com/datasets/gufukuro/movie-scripts-corpus), [ConvoKit/Wikipedia Talk](https://aclanthology.org/2020.sigdial-1.8/), and [Steam Reviews 2021](https://www.kaggle.com/datasets/najzeko/steam-reviews-2021). The underlying documents retain their source terms; the code license does not relicense them. Separate original data license/notice files were not present in the supplied canonical directory.
 
-Data checks compare checksums, row counts, retained source values, selection identities, and selection order. κ checks compare the retained routines with the original implementation and brute-force solutions on small tied-score and multi-stage inputs. Model inference and full paper experiments are not rerun as part of packaging.
+Data checks compare checksums, row counts, retained source values, selection identities, and selection order. Selection checks compare the generic routines against the original sampler and cover exact ranks, tied/disjoint tails, strict Uniform success/failure, string IDs, reproducibility, reordered inputs, overwrite behavior, and generator-to-κ interoperability. κ checks compare the retained routines with the original implementation and brute-force solutions on small tied-score and multi-stage inputs. Validation fixtures are kept outside this minimal release. Model inference and full paper experiments are not rerun as part of packaging.
